@@ -2,28 +2,20 @@ CC       ?= cc
 CFLAGS   ?= -Wall -Wextra -Werror -pedantic -std=c99
 INCLUDES  = -Iinclude
 
-SRC_DIR   = src
 TEST_DIR  = tests
 EX_DIR    = examples
 BUILD_DIR = build
 
-LIB_SRC   = $(SRC_DIR)/raii.c
-LIB_OBJ   = $(BUILD_DIR)/raii.o
-
-TESTS     = $(BUILD_DIR)/test_managed $(BUILD_DIR)/test_defer $(BUILD_DIR)/test_guard $(BUILD_DIR)/test_convenience
+TESTS     = $(BUILD_DIR)/test_core $(BUILD_DIR)/test_posix
 EXAMPLES  = $(BUILD_DIR)/example
 
-.PHONY: all lib test example clean
+.PHONY: all test example clean
 
-all: lib
-
-lib: $(LIB_OBJ)
+# Header-only: nothing to build by default.
+all: test
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
-
-$(LIB_OBJ): $(LIB_SRC) include/raii.h | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) -c $(LIB_SRC) -o $@
 
 # ── Tests ──────────────────────────────────────────────────────────────
 
@@ -32,17 +24,11 @@ test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
 	@echo "=== All tests passed ==="
 
-$(BUILD_DIR)/test_managed: $(TEST_DIR)/test_managed.c $(LIB_OBJ) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_managed.c $(LIB_OBJ) -o $@
+$(BUILD_DIR)/test_core: $(TEST_DIR)/test_core.c include/raii.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_core.c -o $@
 
-$(BUILD_DIR)/test_defer: $(TEST_DIR)/test_defer.c $(LIB_OBJ) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_defer.c $(LIB_OBJ) -o $@
-
-$(BUILD_DIR)/test_guard: $(TEST_DIR)/test_guard.c $(LIB_OBJ) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_guard.c $(LIB_OBJ) -o $@
-
-$(BUILD_DIR)/test_convenience: $(TEST_DIR)/test_convenience.c $(LIB_OBJ) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_convenience.c $(LIB_OBJ) -o $@
+$(BUILD_DIR)/test_posix: $(TEST_DIR)/test_posix.c include/raii.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_posix.c -o $@
 
 # ── Examples ───────────────────────────────────────────────────────────
 
@@ -50,8 +36,8 @@ example: $(EXAMPLES)
 	@echo "=== Running example ==="
 	./$(BUILD_DIR)/example
 
-$(BUILD_DIR)/example: $(EX_DIR)/example.c $(LIB_OBJ) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(EX_DIR)/example.c $(LIB_OBJ) -o $@
+$(BUILD_DIR)/example: $(EX_DIR)/example.c include/raii.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) $(EX_DIR)/example.c -o $@
 
 # ── Clean ──────────────────────────────────────────────────────────────
 
