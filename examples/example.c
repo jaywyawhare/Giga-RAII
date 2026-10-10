@@ -1,6 +1,6 @@
 /**
  * @file example.c
- * @brief Giga-RAII usage examples (cleanup-attribute API).
+ * @brief Giga-RAII usage examples: portable block tier and return-safe tier.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -8,8 +8,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
-#include <dirent.h>
-#include <sys/socket.h>
 
 typedef struct { char name[64]; int refs; } resource_t;
 
@@ -30,71 +28,50 @@ static void resource_close(resource_t *r)
     free(r);
 }
 
-RAII_CLEANUP_FN(close_resource, resource_t*, resource_close);
-
-static void example_autofree(void)
+static void example_portable_block(void)
 {
-    printf("--- autofree ---\n");
-    autofree char *buf = malloc(256);
-    strcpy(buf, "hello from autofree");
-    printf("  buf = \"%s\"\n", buf);
-    printf("  (freed at scope exit, even on early return)\n\n");
-}
-
-static void example_typed_alloc(void)
-{
-    printf("--- managed_new / managed_array ---\n");
-    managed_new(resource_t, r);
-    strcpy(r->name, "typed");
-    r->refs = 2;
-    printf("  r->name = \"%s\", refs = %d\n\n", r->name, r->refs);
-}
-
-static void example_file(void)
-{
-    printf("--- autoclose_file ---\n");
-    autoclose_file FILE *f = fopen("/dev/null", "r");
-    printf("  opened /dev/null (FILE* = %p)\n\n", (void *)f);
-}
-
-static void example_fd(void)
-{
-    printf("--- autoclose_fd ---\n");
-    autoclose_fd int fd = open("/dev/null", O_RDONLY);
-    autoclose_fd int sk = socket(AF_INET, SOCK_STREAM, 0);
-    printf("  fd=%d, socket=%d (both closed at scope exit)\n\n", fd, sk);
-}
-
-static void example_dir(void)
-{
-    printf("--- autoclose_dir ---\n");
-    autoclose_dir DIR *d = opendir("/tmp");
-    struct dirent *ent;
-    int count = 0;
-    while (d && (ent = readdir(d)) != NULL && count < 3) {
-        printf("  entry: %s\n", ent->d_name);
-        count++;
+    printf("--- portable: managed / managed_fd / defer ---\n");
+    managed(resource_t*, r, resource_open("alpha"), resource_close) {
+        if (!r) break;
+        printf("  using: %s (refs=%d)\n", r->name, r->refs);
+    }
+    managed_fd(fd, open("/dev/null", O_RDONLY)) {
+        printf("  fd = %d\n", fd);
+    }
+    char *tmp = malloc(32);
+    defer(free(tmp)) {
+        strcpy(tmp, "deferred");
+        printf("  tmp = \"%s\"\n", tmp);
     }
     printf("\n");
 }
 
-static void example_custom(void)
+#ifdef RAII_HAS_CLEANUP
+
+RAII_CLEANUP_FN(close_resource, resource_t*, resource_close);
+
+static resource_t *example_return_safe(void)
 {
-    printf("--- RAII_CLEANUP_FN (custom type) ---\n");
-    RAII_CLEANUP(close_resource) resource_t *r = resource_open("my_resource");
+    autofree char *scratch = malloc(128);
+    strcpy(scratch, "return-safe");
+    printf("--- GCC/Clang: autofree / RAII_CLEANUP_FN ---\n");
+    printf("  scratch = \"%s\" (freed even on this return)\n", scratch);
+
+    RAII_CLEANUP(close_resource) resource_t *r = resource_open("beta");
     if (r)
-        printf("  using: %s (refs=%d)\n\n", r->name, r->refs);
+        printf("  using: %s\n\n", r->name);
+    return NULL;
 }
+
+#endif
 
 int main(void)
 {
     printf("=== Giga-RAII Examples ===\n\n");
-    example_autofree();
-    example_typed_alloc();
-    example_file();
-    example_fd();
-    example_dir();
-    example_custom();
+    example_portable_block();
+#ifdef RAII_HAS_CLEANUP
+    (void)example_return_safe();
+#endif
     printf("=== Done ===\n");
     return 0;
 }

@@ -1,119 +1,152 @@
 # Giga-RAII
 
-RAII resource management for C, built on `__attribute__((cleanup))`. Declare a
-variable, and it is released automatically when it goes out of scope.
+RAII resource management for C. A portable core that builds on every C99
+compiler (including MSVC), plus a return-safe layer on GCC/Clang.
 
 ```c
 #include "raii.h"
 
 int main(void) {
-    managed_array(char, buf, 1024);   // buf is char*, no cast
-    strcpy(buf, "Hello, Giga-RAII!");
-    printf("%s\n", buf);
-    return 0;                         // free(buf) runs here
+    managed_array(char, buf, 1024) {   // buf is char*, no cast
+        strcpy(buf, "Hello, Giga-RAII!");
+        printf("%s\n", buf);
+    }                                  // free(buf) runs here
+    return 0;
 }
 ```
 
 ## Why
 
 C has no destructors. Every `malloc` needs a `free`, every `fopen` an `fclose`,
-every `open` a `close`. Miss one and you leak. Giga-RAII attaches the cleanup to
-the variable itself, so it runs on **every** path out of the scope: `return`,
-`break`, `goto`, or falling off the end.
+every `open` a `close`. Miss one and you leak. Giga-RAII ties the cleanup to the
+scope so you cannot forget it.
 
-- **Header-only.** Drop in `include/raii.h`, nothing to compile or link
-- **No footguns.** Cleanup runs even on `return` (unlike block/`for`-loop tricks)
-- **No casts.** Typed allocation helpers bind the right pointer type
-- 11 tests on GCC and Clang with `-Wall -Wextra -Werror -pedantic`
+## Two tiers
 
-> **Requires GCC or Clang.** Giga-RAII uses the `cleanup` attribute, which MSVC
-> does not support. The header `#error`s on unsupported compilers.
+| Tier | Mechanism | Compilers | Return-safe | Shape |
+|------|-----------|-----------|-------------|-------|
+| **Portable** | for-loop block macros | any C99, incl. MSVC | no (block exit) | `managed(...) { }` |
+| **Return-safe** | `__attribute__((cleanup))` | GCC/Clang | yes | `autofree T *x = ...;` |
 
-## Quick Start
+Write cross-platform code with the portable tier. On GCC/Clang you may also use
+the return-safe tier, which runs cleanup on every exit including `return`. Detect
+it with `#ifdef RAII_HAS_CLEANUP`.
 
-```sh
-git clone https://github.com/jaywyawhare/Giga-RAII.git
-cd Giga-RAII
-make test
+### Portability
+
+- **Linux / macOS, GCC or Clang:** both tiers, every feature.
+- **Windows, MSVC:** portable tier only (MSVC has no cleanup attribute). Needs a
+  C99-capable MSVC (VS 2015+).
+- **Windows, MinGW/Clang:** both tiers.
+
+The return-safe `autoclose_*` qualifiers for OS resources (fd, dir, pipe, dl,
+locale) are POSIX-gated. On Windows, pass the matching destructor
+(`closesocket`, `FreeLibrary`, ...) to the portable `managed()` instead.
+
+## Portable tier (every compiler)
+
+### managed(type, name, init, dtor)
+
+Scoped resource; `dtor(name)` runs at block exit. NULL-safe.
+
+```c
+managed(char*, buf, malloc(256), free) {
+    strcpy(buf, "hello");
+}
 ```
 
-To use it, copy `include/raii.h` into your tree and `#include "raii.h"`. That's it.
+### managed_ok(type, name, init, dtor)
 
-## API
+Same, but the block runs only if `init` succeeded (non-NULL), dropping the
+`if (!name) break;` guard.
 
-### Built-in qualifiers
+### managed_new / managed_array
 
-Put these in front of a variable declaration; the resource is released at scope exit.
+Typed allocation, no casts.
+
+```c
+managed_new(struct node, n)   { n->next = NULL; }   // n is struct node*
+managed_array(double, v, 128) { v[0] = 3.14; }      // v is double*
+```
+
+### managed_file / managed_fd
+
+```c
+managed_file(f, "data.txt", "r") { fgets(line, sizeof(line), f); }
+managed_fd(fd, open("f", O_RDONLY)) { read(fd, buf, sizeof(buf)); }
+```
+
+### defer(expr)
+
+Run an expression at block exit; stack for LIFO order.
+
+```c
+defer(free(a))
+defer(free(b)) { /* ... */ }   // free(b) first, then free(a)
+```
+
+### RAII_GUARD(var, acquire, release)
+
+```c
+RAII_GUARD(mtx, pthread_mutex_lock, pthread_mutex_unlock) {
+    shared_counter++;
+}
+```
+
+> The block macros clean up at block exit, not on `return` out of the block.
+> Keep blocks short, or use the return-safe tier below on GCC/Clang.
+
+## Return-safe tier (GCC/Clang, `RAII_HAS_CLEANUP`)
+
+Declare a variable; cleanup runs on every scope exit, including `return`.
 
 | Qualifier | Variable type | Released with | Availability |
 |-----------|---------------|---------------|--------------|
 | `autofree` | any pointer | `free` | always |
 | `autoclose_file` | `FILE*` | `fclose` | always |
-| `autoclose_fd` | `int` (fd) | `close` (if `>= 0`) | POSIX |
+| `autoclose_fd` | `int` (fd) | `close` | POSIX |
 | `autoclose_dir` | `DIR*` | `closedir` | POSIX |
 | `autoclose_pipe` | `FILE*` | `pclose` | POSIX |
 | `autoclose_dl` | `void*` | `dlclose` | POSIX |
 | `autoclose_locale` | `locale_t` | `freelocale` | POSIX |
 
 ```c
-autofree       char *s  = strdup("hi");               // free
-autoclose_file FILE *f  = fopen("data.txt", "r");     // fclose
-autoclose_fd   int   fd = socket(AF_INET, SOCK_STREAM, 0);  // close
-autoclose_dir  DIR  *d  = opendir("/tmp");            // closedir
+char *load(const char *path) {
+    autofree char *buf = malloc(4096);   // freed on every return path
+    if (!read_into(path, buf)) return NULL;
+    ...
+}
 ```
 
-All are NULL/sentinel safe: a failed `fopen` (NULL) or `open` (`-1`) is not closed.
 One `autoclose_fd` covers every fd-returning call: `open`, `creat`, `dup`,
 `socket`, `accept`, `mkstemp`, `shm_open`, `epoll_create`, `eventfd`,
-`timerfd_create`, `signalfd`, `inotify_init`, ...
-
-### Typed allocation
-
-| Macro | Binds | Released with |
-|-------|-------|---------------|
-| `managed_new(T, name)` | `T *name = malloc(sizeof(T))` | `free` |
-| `managed_array(T, name, n)` | `T *name = malloc(sizeof(T) * n)` | `free` |
-
-```c
-managed_new(struct node, n);   // n is struct node*
-managed_array(double, v, 128);  // v is double*, no cast
-```
+`timerfd_create`, `signalfd`, `inotify_init`.
 
 ### Custom types
 
-`RAII_CLEANUP_FN` generates a NULL-safe cleanup function for your type; attach it
-with `RAII_CLEANUP`.
+`RAII_CLEANUP_FN` generates a NULL-safe cleanup function; attach it with
+`RAII_CLEANUP`.
 
 ```c
 RAII_CLEANUP_FN(close_db, db_t*, db_close);   // once, at file scope
 
 void use(void) {
     RAII_CLEANUP(close_db) db_t *h = db_open("x");   // db_close(h) at scope exit
-    ...
 }
 ```
-
-For a one-off cleanup, point `RAII_CLEANUP(fn)` at any `void fn(T*)` you write.
-
-## Limitations
-
-- **GCC/Clang only.** Relies on `__attribute__((cleanup))`.
-- **Cleanup runs at the enclosing scope's exit.** Open a nested `{ }` block if you
-  want a resource released earlier than the end of the function.
-- **Order is reverse of declaration** within a scope (last declared, first released).
-- **Not thread-safe by itself.** The qualifiers manage scope, not synchronization.
 
 ## Building
 
 ```sh
 make test               # build and run all tests
 make example            # build and run the examples
-make clean              # remove build artifacts
+make clean
 
-CC=clang make test      # test with clang
+CC=clang make test
 ```
 
-Compiler flags: `-Wall -Wextra -Werror -pedantic -std=c99`
+Compiler flags: `-Wall -Wextra -Werror -pedantic -std=c99`. Header-only; copy
+`include/raii.h` into your tree and `#include "raii.h"`.
 
 ## License
 This project is licensed under the DBaJ-GPL license. See the [LICENSE](LICENCE) file for details.

@@ -6,7 +6,7 @@ TEST_DIR  = tests
 EX_DIR    = examples
 BUILD_DIR = build
 
-TESTS     = $(BUILD_DIR)/test_core $(BUILD_DIR)/test_posix
+TESTS     = $(BUILD_DIR)/test_managed $(BUILD_DIR)/test_cleanup
 EXAMPLES  = $(BUILD_DIR)/example
 
 .PHONY: all test example clean
@@ -24,11 +24,11 @@ test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
 	@echo "=== All tests passed ==="
 
-$(BUILD_DIR)/test_core: $(TEST_DIR)/test_core.c include/raii.h | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_core.c -o $@
+$(BUILD_DIR)/test_managed: $(TEST_DIR)/test_managed.c include/raii.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_managed.c -o $@
 
-$(BUILD_DIR)/test_posix: $(TEST_DIR)/test_posix.c include/raii.h | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_posix.c -o $@
+$(BUILD_DIR)/test_cleanup: $(TEST_DIR)/test_cleanup.c include/raii.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) $(TEST_DIR)/test_cleanup.c -o $@
 
 # ── Examples ───────────────────────────────────────────────────────────
 
